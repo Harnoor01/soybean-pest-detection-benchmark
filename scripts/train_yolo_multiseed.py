@@ -137,8 +137,9 @@ MODEL_REGISTRY = {
 }
 
 # ── Data path ─────────────────────────────────────────────────────────────────
-BASE = ("/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-        "soybean_detection_project")
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent.parent
 
 if args.data:
     DATA_YAML = args.data

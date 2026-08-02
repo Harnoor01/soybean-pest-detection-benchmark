@@ -38,8 +38,7 @@ from collections import defaultdict
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-PROJECT = Path("/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-               "soybean_detection_project")
+PROJECT = Path(__file__).resolve().parent.parent
 SRC_DEFAULT = PROJECT / "soybean_yolo_clean"
 DST_ROOT    = PROJECT / "soybean_yolo_splits"
 

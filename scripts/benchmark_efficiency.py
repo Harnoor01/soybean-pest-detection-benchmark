@@ -1,4 +1,7 @@
+#!/usr/bin/env python3
+
 from pathlib import Path
+import argparse
 import csv
 import statistics
 
@@ -7,34 +10,39 @@ from ultralytics import YOLO
 from ultralytics.utils.torch_utils import get_flops
 
 
-CHECKPOINTS = {
-    "YOLOv8s": {
-        42: (
-            "/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-            "soybean_detection_project/results/E1_yolov8s/weights/best.pt"
-        ),
-    },
-    "YOLO26s": {
-        42: (
-            "/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-            "soybean_detection_project/results/E1_yolo26s/weights/best.pt"
-        ),
-    },
-    "RT-DETR-L": {
-        42: (
-            "/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-            "soybean_detection_project/results/E1_rtdetr/weights/best.pt"
-        ),
-    },
-}
-
-
 DEVICE = "cuda:0"
 IMAGE_SIZE = 640
 BATCH_SIZE = 1
 WARMUP_RUNS = 50
 TIMED_RUNS = 300
 USE_FP16 = True
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Benchmark model parameters, GFLOPs, latency, and FPS."
+    )
+    parser.add_argument(
+        "--yolov8s",
+        required=True,
+        help="Path to the trained YOLOv8s checkpoint.",
+    )
+    parser.add_argument(
+        "--yolo26s",
+        required=True,
+        help="Path to the trained YOLO26s checkpoint.",
+    )
+    parser.add_argument(
+        "--rtdetr",
+        required=True,
+        help="Path to the trained RT-DETR-L checkpoint.",
+    )
+    parser.add_argument(
+        "--output",
+        default="efficiency_results.csv",
+        help="Output CSV path.",
+    )
+    return parser.parse_args()
 
 
 def get_model_complexity(checkpoint: str) -> tuple[int, float]:
@@ -84,7 +92,6 @@ def benchmark_latency(checkpoint: str) -> tuple[float, float]:
             end_event.record()
 
             torch.cuda.synchronize()
-
             timings_ms.append(start_event.elapsed_time(end_event))
 
     mean_latency_ms = statistics.mean(timings_ms)
@@ -94,8 +101,16 @@ def benchmark_latency(checkpoint: str) -> tuple[float, float]:
 
 
 def main() -> None:
+    args = parse_args()
+
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU is not available.")
+
+    checkpoints = {
+        "YOLOv8s": args.yolov8s,
+        "YOLO26s": args.yolo26s,
+        "RT-DETR-L": args.rtdetr,
+    }
 
     print("GPU:", torch.cuda.get_device_name(0))
     print("Image size:", IMAGE_SIZE)
@@ -104,60 +119,34 @@ def main() -> None:
 
     rows = []
 
-    for model_name, seeds in CHECKPOINTS.items():
-        latency_values = []
-        fps_values = []
-
-        first_checkpoint = next(iter(seeds.values()))
-
-        if not Path(first_checkpoint).exists():
+    for model_name, checkpoint in checkpoints.items():
+        if not Path(checkpoint).exists():
             raise FileNotFoundError(
-                f"Checkpoint does not exist: {first_checkpoint}"
+                f"Checkpoint does not exist: {checkpoint}"
             )
 
-        parameters, gflops = get_model_complexity(first_checkpoint)
+        print(f"\nBenchmarking {model_name}")
 
-        for seed, checkpoint in seeds.items():
-            if not Path(checkpoint).exists():
-                raise FileNotFoundError(
-                    f"Checkpoint does not exist: {checkpoint}"
-                )
+        parameters, gflops = get_model_complexity(checkpoint)
+        latency_ms, fps = benchmark_latency(checkpoint)
 
-            print(f"\nBenchmarking {model_name}, seed {seed}")
+        print(f"Latency: {latency_ms:.3f} ms/image")
+        print(f"FPS: {fps:.2f}")
 
-            latency_ms, fps = benchmark_latency(checkpoint)
+        rows.append(
+            {
+                "model": model_name,
+                "parameters": parameters,
+                "parameters_millions": parameters / 1_000_000,
+                "gflops": gflops,
+                "latency_mean_ms": latency_ms,
+                "latency_sd_ms": 0.0,
+                "fps_mean": fps,
+                "fps_sd": 0.0,
+            }
+        )
 
-            print(f"Latency: {latency_ms:.3f} ms/image")
-            print(f"FPS: {fps:.2f}")
-
-            latency_values.append(latency_ms)
-            fps_values.append(fps)
-
-        row = {
-            "model": model_name,
-            "parameters": parameters,
-            "parameters_millions": parameters / 1_000_000,
-            "gflops": gflops,
-            "latency_mean_ms": statistics.mean(latency_values),
-            "latency_sd_ms": (
-                statistics.stdev(latency_values)
-                if len(latency_values) > 1
-                else 0.0
-            ),
-            "fps_mean": statistics.mean(fps_values),
-            "fps_sd": (
-                statistics.stdev(fps_values)
-                if len(fps_values) > 1
-                else 0.0
-            ),
-        }
-
-        rows.append(row)
-
-    output_file = Path(
-        "/project/def-grandha8-ab/harnoor1/pest_project_EPA/"
-        "soybean_detection_project/efficiency_results.csv"
-    )
+    output_file = Path(args.output)
 
     with output_file.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=rows[0].keys())
@@ -171,10 +160,8 @@ def main() -> None:
             f"{row['model']}: "
             f"{row['parameters_millions']:.2f} M parameters, "
             f"{row['gflops']:.2f} GFLOPs, "
-            f"{row['latency_mean_ms']:.2f} ± "
-            f"{row['latency_sd_ms']:.2f} ms, "
-            f"{row['fps_mean']:.2f} ± "
-            f"{row['fps_sd']:.2f} FPS"
+            f"{row['latency_mean_ms']:.2f} ms, "
+            f"{row['fps_mean']:.2f} FPS"
         )
 
 
